@@ -1,0 +1,238 @@
+Изменение коэффициента усиления
+function k = fcn(u)
+if (u>=0 && u<=89.9)
+    k = -0.266*u + 34.894;
+else
+    k = 0.106*u + 1.4;
+end
+end
+
+Привод задвижки
+function position = fcn(u,t)
+persistent tpast
+persistent y
+if isempty(tpast)
+    tpast=t;
+end
+if isempty(y)
+    y=0;
+end
+if u==1
+    if (t-tpast)>=0.025
+        tpast=t;
+        y=y+0.1;
+        position=y;
+    else
+        position=y;
+    end
+else
+    if u==-1
+        if (t-tpast)>=0.025
+            tpast=t;
+            y=y-0.1;
+            position=y;
+        else
+        position=y;
+        end
+    else
+        position=y;
+    end
+end
+
+Генератор управляющих импульсов
+function [position_difference,d_f,Regime] = fcn(uf,f,pos,t)
+ 
+persistent pos_array;
+persistent k_coefficients_array;
+persistent f_array;
+persistent time_on;
+persistent dpos;
+persistent df;
+persistent past_time;
+persistent past_f;
+persistent past_pos;
+persistent step_time;
+persistent Steps_now;
+persistent Regime_now;
+persistent pos_dif;
+persistent direction;
+persistent pause;
+ 
+if isempty(pos_array)
+    pos_array=zeros(1,1000);
+    for i=1:1000
+       pos_array(i)=(i-1)*0.1; 
+    end
+        k_coefficients_array=zeros(1,1000);
+    for i=1:1000
+       if (pos_array(i)>=0 && pos_array(i)<=89.9)
+            k_coefficients_array(i) = -0.266*pos_array(i) + 34.894;
+       else
+            k_coefficients_array(i) = 0.106*pos_array(i) + 1.4;
+       end 
+    end
+        f_array=zeros(1,1000);
+    for i=1:1000
+        f_array(i)=pos_array(i)*k_coefficients_array(i);
+    end
+    time_on=0;
+    dpos=0;
+    df=0;
+    past_f=0;
+    past_pos=0;
+    step_time=0;
+    Steps_now=0;
+    Regime_now=0;
+    past_time=0;
+    pos_dif=0;
+    direction=0;
+    pause=0;
+end
+coder.extrinsic('round')
+ 
+if (t-past_time)>=0.001
+    dpos=(pos-past_pos)/0.001; past_pos=pos;
+    df=(f-past_f)/0.001; past_f=f;
+    past_time=t;
+end
+ 
+[~,ind]=min(abs(f_array-f));
+f=f_array(ind);
+ 
+[~,ind]=min(abs(pos_array-pos));
+pos=pos_array(ind);
+ 
+[~,ind]=min(abs(f_array-uf));
+pos_dif=pos_array(ind)-pos;
+ 
+if dpos==0 && df==0 && uf~=f && Steps_now==0 && pos_dif~=0
+    if abs(pos_dif)<=10
+            Steps_now=1;
+            step_time=abs(pos_dif)/4;
+        else
+            Steps_now=5;
+            step_time=abs(pos_dif/5)/4;
+    end
+    pos_dif=round(pos_dif,1);
+    if pos_dif<0
+        direction=-1;
+    end
+    if pos_dif>0
+        direction=1;
+    end
+end
+if Steps_now>0 && Regime_now==0 && pause==0
+    time_on=t;
+    Regime_past=Regime_now;
+    Regime_now=direction;
+    Regime=direction;
+end
+if abs(t-time_on)>=step_time && Regime_now~=0
+    time_on=t;
+    Regime_past=Regime_now;
+    Regime_now=0;
+    Regime=0;
+    Steps_now=Steps_now-1;
+    pause=1;
+else
+    Regime=Regime_now;
+end
+if df==0 && dpos==0
+    pause=0;
+end
+position_difference=pos_dif;
+d_f=df;
+end
+
+Регулятор-компенсатор расхода
+function Main_uf  = fcn(Position_difference,d_f,uf,outflow,Filling_mode)
+persistent out_now;
+persistent past_out_now;
+ 
+if isempty(out_now)
+    out_now=0;
+    past_out_now=0;
+end
+ 
+if Filling_mode==1
+    out_now=1200;
+else
+    if Position_difference==0 && d_f==0
+        out_now=out_now-(outflow-uf);
+    else
+        out_now=past_out_now;
+    end
+end
+Main_uf=out_now;
+past_out_now=out_now;
+end
+Регулятор-компенсатор уровня
+function [uf,out_flow,Filling_mode] = fcn(t,ul,l)
+ 
+persistent past_l;
+persistent dl;
+persistent past_t;
+persistent outflow;
+persistent fm;
+ 
+if isempty(past_l)
+    past_l=l;
+    dl=0;
+    past_t=t;
+    outflow=0;
+    uf_now=0;
+    fm=0;
+end
+ 
+if past_l~=l
+    dl=(((l-past_l)/(t-past_t))/1000)*3600;
+    past_t=t;
+    past_l=l;
+end
+outflow=dl*107;
+l_real=l/1000;
+ 
+if l_real==0
+    fm=1;
+end
+if (l_real-ul)>=0
+    fm=0;
+end
+if ul>l_real
+    uf=30;
+else
+    uf=-30;
+end
+Filling_mode=fm;
+out_flow=outflow;
+end
+
+Датчик уровня
+function lmm = fcn(lm)
+persistent lm_past;
+ 
+if isempty(lm_past)
+    lm_past=lm;
+end
+ 
+if abs(lm-lm_past)>=0.005
+    lm_past=lm;
+    lmm=lm*1000;
+else
+    lmm=lm_past*1000;
+end
+ 
+end
+Добавление утечки
+function outflow = fcn(l)
+persistent past_outflow;
+if isempty(past_outflow)
+    past_outflow=0;
+end
+if l>1
+    outflow = -800;
+    past_outflow=-800;
+else
+    outflow = past_outflow;
+end
+end
